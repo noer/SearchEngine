@@ -1,58 +1,63 @@
-from sqlalchemy import create_engine
+import sys
 from pathlib import Path
-import re
+import psycopg2
+from datetime import datetime
 
 db_string = "postgres://search:search123@localhost/search"
 
-db = create_engine(db_string)
+sql_doc = "SELECT id,timestamp FROM document WHERE url=%s;"
+sql_doc_ins = "INSERT INTO document (url,timestamp) VALUES (%s, %s) RETURNING id"
+sql_doc_upd = "UPDATE document SET timestamp = %s WHERE id=%s"
+sql_term = "SELECT id FROM term WHERE value=%s"
+sql_term_ins = "INSERT INTO term (value) Values (%s) RETURNING id"
+sql_term_doc_ins = "INSERT INTO term_doc values (%s, %s, %s)"
+sql_term_doc_del = "DELETE FROM term_doc WHERE docid=%s"
 
 
-def readfile(doc):
-    f = open(str(doc), 'r');
-    txt = f.read()
-    words = txt.split()
-    return words
-
-def parseDocument(document):
-    res = db.execute("SELECT id FROM document WHERE url='"+str(document)+"'")
-    if(res.rowcount == 0):
-        db.execute("INSERT INTO document (url,timestamp) VALUES ('"+str(document)+"', NOW())")
-        res = db.execute("SELECT id FROM document WHERE url='"+str(document)+"'")
-    docID = res.fetchone()[0]
-
-    pos = 0
-    words = readfile(document)
-    for word in words:
-        word = word.replace("'", "''")
-        word = word.replace("%", "%%")
-        termres = db.execute("SELECT id FROM term WHERE value='"+word+"'")
-        if termres.rowcount == 0:
-            tid = db.execute("INSERT INTO term (value) Values ('"+word+"')")
-            termres = db.execute("SELECT id FROM term WHERE value='"+word+"'")
-        termID = termres.fetchone()[0]
-
-        db.execute("INSERT INTO term_doc values ("+str(docID)+","+str(termID)+","+str(pos)+")")
-        pos = pos+1
+def get_words(file):
+    with file.open('r') as fd:
+        txt = fd.read()
+        words = txt.split()
+        return words
 
 
+def parse_document(file):
+    file_timestamp = datetime.fromtimestamp(file.lstat().st_mtime)
+    with conn.cursor() as cur:
+        cur.execute(sql_doc, [str(file)])
+        if cur.rowcount == 0:
+            print("Adding document " + str(file))
+            cur.execute(sql_doc_ins, [str(file), file_timestamp])
+            doc_id = cur.fetchone()[0]
+        else:
+            row = cur.fetchone()
+            doc_id = row[0]
+            timestamp = row[1]
+            if not timestamp == file_timestamp:
+                print("Updating document " + str(file))
+                cur.execute(sql_doc_upd, [file_timestamp, doc_id])
+                cur.execute(sql_term_doc_del, [doc_id])
+            else:
+                return
 
-result = list(Path("/home/jnoer/tmp/enron/test/").rglob("*"))
-for file in result:
-    if not file.is_dir():
-        parseDocument(file)
+        pos = 0
+        words = get_words(file)
+        for word in words:
+            cur.execute(sql_term, [word])
+            if cur.rowcount == 0:
+                cur.execute(sql_term_ins, [word])
+            term_id = cur.fetchone()[0]
+
+            cur.execute(sql_term_doc_ins, (doc_id, term_id, pos))
+            pos = pos+1
+        conn.commit()
 
 
-# Create
-#db.execute("CREATE TABLE IF NOT EXISTS films (title text, director text, year text)")
-#db.execute("INSERT INTO document (url,timestamp) VALUES ('test2.pdf', NOW())")
-
-# Read
-#result_set = db.execute("SELECT * FROM document")
-#for r in result_set:
-#    print(r)
-
-# Update
-#db.execute("UPDATE films SET title='Some2016Film' WHERE year='2016'")
-
-# Delete
-#db.execute("DELETE FROM films WHERE year='2016'")
+if len(sys.argv) < 2:
+    print("Usage: indexer.py <folder to scan>")
+    exit(1)
+result = list(Path(sys.argv[1]).rglob("*"))
+with psycopg2.connect(db_string) as conn:
+    for file in result:
+        if file.is_file():
+            parse_document(file)
