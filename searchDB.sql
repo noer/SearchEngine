@@ -16,7 +16,8 @@ CREATE TABLE public.term
 (
   id serial,
   value character varying(255),
-  CONSTRAINT termid_idx PRIMARY KEY (id)
+  CONSTRAINT termid_idx PRIMARY KEY (id),
+  CONSTRAINT value_uniq UNIQUE (value)
 )
 WITH (
   OIDS=FALSE
