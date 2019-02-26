@@ -2,8 +2,7 @@ import sys
 from pathlib import Path
 import psycopg2
 from datetime import datetime
-
-db_string = "postgres://search:search123@localhost/search"
+import config
 
 sql_doc = "SELECT id,timestamp FROM document WHERE url=%s;"
 sql_doc_ins = "INSERT INTO document (url,timestamp) VALUES (%s, %s) RETURNING id"
@@ -57,7 +56,7 @@ if len(sys.argv) < 2:
     print("Usage: indexer.py <folder to scan>")
     exit(1)
 result = list(Path(sys.argv[1]).rglob("*"))
-with psycopg2.connect(db_string) as conn:
+with psycopg2.connect(config.db_string) as conn:
     for file in result:
         if file.is_file():
             parse_document(file)
